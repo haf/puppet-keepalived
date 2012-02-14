@@ -1,0 +1,31 @@
+node LB1 inherits default {
+
+	include keepalived
+	keepalived::webmail { "xxx":
+		name => "VI_1",
+		emailto => "xxx@xxx",
+		emailfrom => "xxx@xxx",
+		smtpserver => "127.0.0.1",
+		interface => "eth0",
+		state => "MASTER",
+		priority => "200",
+		auth_pass => "xxx",
+		virtual_ips => ['xxx', 'xxx'],
+	}
+}
+
+node LB1 inherits default {
+
+	include keepalived
+	keepalived::webmail { "xxx":
+		name => "VI_1",
+		emailto => "xxx@xxx",
+		emailfrom => "xxx@xxx",
+		smtpserver => "127.0.0.1",
+		interface => "eth0",
+		state => "BACKUP",
+		priority => "100",
+		auth_pass => "xxx",
+		virtual_ips => ['xxx', 'xxx'],
+	}
+}
