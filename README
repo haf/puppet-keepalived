@@ -14,7 +14,7 @@ node LB1 inherits default {
 	}
 }
 
-node LB1 inherits default {
+node LB2 inherits default {
 
 	include keepalived
 	keepalived::webmail { "xxx":
