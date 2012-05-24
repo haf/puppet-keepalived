@@ -11,6 +11,7 @@ node LB1 inherits default {
 		priority => "200",
 		auth_pass => "xxx",
 		virtual_ips => ['xxx', 'xxx'],
+		vrrp_script => ['haproxy', 'nginx'],
 	}
 }
 
@@ -27,5 +28,6 @@ node LB2 inherits default {
 		priority => "100",
 		auth_pass => "xxx",
 		virtual_ips => ['xxx', 'xxx'],
+		vrrp_script => ['haproxy', 'nginx'],
 	}
 }
