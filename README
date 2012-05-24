@@ -1,7 +1,7 @@
 node LB1 inherits default {
 
 	include keepalived
-	keepalived::webmail { "xxx":
+	keepalived::base { "xxx":
 		name => "VI_1",
 		emailto => "xxx@xxx",
 		emailfrom => "xxx@xxx",
@@ -18,7 +18,7 @@ node LB1 inherits default {
 node LB2 inherits default {
 
 	include keepalived
-	keepalived::webmail { "xxx":
+	keepalived::base { "xxx":
 		name => "VI_1",
 		emailto => "xxx@xxx",
 		emailfrom => "xxx@xxx",
