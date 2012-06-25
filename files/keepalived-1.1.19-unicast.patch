@@ -1,0 +1,206 @@
+diff -urN keepalived-silent-check/keepalived/include/vrrp.h keepalived-silent-check-unicast/keepalived/include/vrrp.h
+--- keepalived-silent-check/keepalived/include/vrrp.h	2010-01-10 21:28:10.000000000 +0000
++++ keepalived-silent-check-unicast/keepalived/include/vrrp.h	2010-01-24 21:45:47.000000000 +0000
+@@ -94,6 +94,8 @@
+ 	list track_ifp;		/* Interface state we monitor */
+ 	list track_script;	/* Script state we monitor */
+ 	uint32_t mcast_saddr;	/* Src IP address to use in VRRP IP header */
++	uint32_t unicast_bind;	/* listen to this IP if mcast is not possible */
++	uint32_t unicast_peer;	/* send to this IP if mcast is not possible */
+ 	char *lvs_syncd_if;	/* handle LVS sync daemon state using this
+ 				 * instance FSM & running on specific interface
+ 				 * => eth0 for example.
+@@ -209,8 +211,8 @@
+ #define VRRP_ISUP(V)           (VRRP_IF_ISUP(V) && VRRP_SCRIPT_ISUP(V))
+ 
+ /* prototypes */
+-extern int open_vrrp_send_socket(const int proto, const int idx);
+-extern int open_vrrp_socket(const int proto, const int idx);
++extern int open_vrrp_send_socket(const int proto, const int id, const int unicastx);
++extern int open_vrrp_socket(const int proto, const int idx, const int unicast);
+ extern int new_vrrp_socket(vrrp_rt * vrrp);
+ extern void close_vrrp_socket(vrrp_rt * vrrp);
+ extern void vrrp_send_gratuitous_arp(vrrp_rt * vrrp);
+diff -urN keepalived-silent-check/keepalived/include/vrrp_if.h keepalived-silent-check-unicast/keepalived/include/vrrp_if.h
+--- keepalived-silent-check/keepalived/include/vrrp_if.h	2009-11-05 17:14:06.000000000 +0000
++++ keepalived-silent-check-unicast/keepalived/include/vrrp_if.h	2010-01-24 21:46:00.000000000 +0000
+@@ -116,7 +116,7 @@
+ extern void free_interface_queue(void);
+ extern void dump_if(void *if_data_obj);
+ extern int if_join_vrrp_group(int sd, interface * ifp, int proto);
+-extern void if_leave_vrrp_group(int sd, interface * ifp);
++extern void if_leave_vrrp_group(int sd, interface * ifp, int unicast);
+ extern int if_setsockopt_bindtodevice(int sd, interface * ifp);
+ extern int if_setsockopt_hdrincl(int sd);
+ extern int if_setsockopt_mcast_loop(int sd);
+diff -urN keepalived-silent-check/keepalived/vrrp/vrrp.c keepalived-silent-check-unicast/keepalived/vrrp/vrrp.c
+--- keepalived-silent-check/keepalived/vrrp/vrrp.c	2010-01-10 22:11:17.000000000 +0000
++++ keepalived-silent-check-unicast/keepalived/vrrp/vrrp.c	2010-01-24 21:49:19.000000000 +0000
+@@ -332,8 +332,8 @@
+ 	/* fill protocol type --rfc2402.2 */
+ 	ip->protocol =
+ 	    (vrrp->auth_type == VRRP_AUTH_AH) ? IPPROTO_IPSEC_AH : IPPROTO_VRRP;
+-	ip->saddr = VRRP_PKT_SADDR(vrrp);
+-	ip->daddr = htonl(INADDR_VRRP_GROUP);
++	ip->saddr = vrrp->unicast_bind ? vrrp->unicast_bind : VRRP_PKT_SADDR(vrrp);
++	ip->daddr = vrrp->unicast_peer ? vrrp->unicast_peer : htonl(INADDR_VRRP_GROUP);
+ 
+ 	/* checksum must be done last */
+ 	ip->check = in_csum((u_short *) ip, ip->ihl * 4, 0);
+@@ -508,7 +508,7 @@
+ 	/* Sending path */
+ 	memset(&dst, 0, sizeof(dst));
+ 	dst.sin_family = AF_INET;
+-	dst.sin_addr.s_addr = htonl(INADDR_VRRP_GROUP);
++	dst.sin_addr.s_addr = vrrp->unicast_peer ? vrrp->unicast_peer : htonl(INADDR_VRRP_GROUP);
+ 	dst.sin_port = htons(0);
+ 
+ 	/* Build the message data */
+@@ -916,7 +916,7 @@
+ 
+ /* open a VRRP sending socket */
+ int
+-open_vrrp_send_socket(const int proto, const int idx)
++open_vrrp_send_socket(const int proto, const int idx, const int unicast)
+ {
+ 	interface *ifp;
+ 	int fd = -1;
+@@ -936,14 +936,15 @@
+ 	/* Set fd */
+ 	if_setsockopt_hdrincl(fd);
+ 	if_setsockopt_bindtodevice(fd, ifp);
+-	if_setsockopt_mcast_loop(fd);
++	if (!unicast)
++		if_setsockopt_mcast_loop(fd);
+ 
+ 	return fd;
+ }
+ 
+ /* open a VRRP socket and join the multicast group. */
+ int
+-open_vrrp_socket(const int proto, const int idx)
++open_vrrp_socket(const int proto, const int idx, const int unicast)
+ {
+ 	interface *ifp;
+ 	int fd = -1;
+@@ -961,7 +962,8 @@
+ 	}
+ 
+ 	/* Join the VRRP MCAST group */
+-	if_join_vrrp_group(fd, ifp, proto);
++	if (!unicast)
++		if_join_vrrp_group(fd, ifp, proto);
+ 
+ 	/* Bind inbound stream */
+ 	if_setsockopt_bindtodevice(fd, ifp);
+@@ -972,7 +974,7 @@
+ void
+ close_vrrp_socket(vrrp_rt * vrrp)
+ {
+-	if_leave_vrrp_group(vrrp->fd_in, vrrp->ifp);
++	if_leave_vrrp_group(vrrp->fd_in, vrrp->ifp, !vrrp->unicast_peer);
+ 	close(vrrp->fd_out);
+ }
+ 
+@@ -986,8 +988,8 @@
+ 	close_vrrp_socket(vrrp);
+ 	remove_vrrp_fd_bucket(vrrp);
+ 	proto = (vrrp->auth_type == VRRP_AUTH_AH) ? IPPROTO_IPSEC_AH : IPPROTO_VRRP;
+-	vrrp->fd_in = open_vrrp_socket(proto, IF_INDEX(vrrp->ifp));
+-	vrrp->fd_out = open_vrrp_send_socket(proto, IF_INDEX(vrrp->ifp));
++	vrrp->fd_in = open_vrrp_socket(proto, IF_INDEX(vrrp->ifp), !vrrp->unicast_peer);
++	vrrp->fd_out = open_vrrp_send_socket(proto, IF_INDEX(vrrp->ifp), !vrrp->unicast_peer);
+ 	alloc_vrrp_fd_bucket(vrrp);
+ 
+ 	/* Sync the other desc */
+diff -urN keepalived-silent-check/keepalived/vrrp/vrrp_data.c keepalived-silent-check-unicast/keepalived/vrrp/vrrp_data.c
+--- keepalived-silent-check/keepalived/vrrp/vrrp_data.c	2009-11-05 17:14:06.000000000 +0000
++++ keepalived-silent-check-unicast/keepalived/vrrp/vrrp_data.c	2010-01-24 21:47:03.000000000 +0000
+@@ -139,7 +139,7 @@
+ 	interface *ifp;
+ 	if (sock_obj->fd_in > 0) {
+ 		ifp = if_get_by_ifindex(sock_obj->ifindex);
+-		if_leave_vrrp_group(sock_obj->fd_in, ifp);
++		if_leave_vrrp_group(sock_obj->fd_in, ifp, 0);
+ 	}
+ 	if (sock_obj->fd_out > 0)
+ 		close(sock_obj->fd_out);
+diff -urN keepalived-silent-check/keepalived/vrrp/vrrp_if.c keepalived-silent-check-unicast/keepalived/vrrp/vrrp_if.c
+--- keepalived-silent-check/keepalived/vrrp/vrrp_if.c	2009-11-05 17:14:06.000000000 +0000
++++ keepalived-silent-check-unicast/keepalived/vrrp/vrrp_if.c	2010-01-24 21:44:00.000000000 +0000
+@@ -443,7 +443,7 @@
+ }
+ 
+ void
+-if_leave_vrrp_group(int sd, interface *ifp)
++if_leave_vrrp_group(int sd, interface *ifp, int unicast)
+ {
+ 	struct ip_mreqn req_add;
+ 	int ret = 0;
+@@ -452,6 +452,9 @@
+ 	if (sd < 0 || !ifp)
+ 		return;
+ 
++	if (unicast)
++		goto skip_mcast_release;
++
+ 	/* Leaving the VRRP multicast group */
+ 	memset(&req_add, 0, sizeof (req_add));
+ 	req_add.imr_multiaddr.s_addr = htonl(INADDR_VRRP_GROUP);
+@@ -465,6 +468,7 @@
+ 		return;
+ 	}
+ 
++skip_mcast_release:
+ 	/* Finally close the desc */
+ 	close(sd);
+ }
+diff -urN keepalived-silent-check/keepalived/vrrp/vrrp_parser.c keepalived-silent-check-unicast/keepalived/vrrp/vrrp_parser.c
+--- keepalived-silent-check/keepalived/vrrp/vrrp_parser.c	2010-01-10 21:28:10.000000000 +0000
++++ keepalived-silent-check-unicast/keepalived/vrrp/vrrp_parser.c	2010-01-24 21:31:28.000000000 +0000
+@@ -151,6 +151,18 @@
+ 	inet_ston(VECTOR_SLOT(strvec, 1), &vrrp->mcast_saddr);
+ }
+ static void
++vrrp_unicast_bind_handler(vector strvec)
++{
++	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
++	inet_ston(VECTOR_SLOT(strvec, 1), &vrrp->unicast_bind);
++}
++static void
++vrrp_unicast_peer_handler(vector strvec)
++{
++	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
++	inet_ston(VECTOR_SLOT(strvec, 1), &vrrp->unicast_peer);
++}
++static void
+ vrrp_vrid_handler(vector strvec)
+ {
+ 	vrrp_rt *vrrp = LIST_TAIL_DATA(vrrp_data->vrrp);
+@@ -424,6 +436,8 @@
+ 	install_keyword("track_interface", &vrrp_track_int_handler);
+ 	install_keyword("track_script", &vrrp_track_scr_handler);
+ 	install_keyword("mcast_src_ip", &vrrp_mcastip_handler);
++	install_keyword("vrrp_unicast_bind", &vrrp_unicast_bind_handler);
++	install_keyword("vrrp_unicast_peer", &vrrp_unicast_peer_handler);
+ 	install_keyword("virtual_router_id", &vrrp_vrid_handler);
+ 	install_keyword("priority", &vrrp_prio_handler);
+ 	install_keyword("advert_int", &vrrp_adv_handler);
+diff -urN keepalived-silent-check/keepalived/vrrp/vrrp_scheduler.c keepalived-silent-check-unicast/keepalived/vrrp/vrrp_scheduler.c
+--- keepalived-silent-check/keepalived/vrrp/vrrp_scheduler.c	2009-11-05 17:14:06.000000000 +0000
++++ keepalived-silent-check-unicast/keepalived/vrrp/vrrp_scheduler.c	2010-01-24 21:49:59.000000000 +0000
+@@ -457,12 +457,12 @@
+ 
+ 	for (e = LIST_HEAD(l); e; ELEMENT_NEXT(e)) {
+ 		sock_obj = ELEMENT_DATA(e);
+-		sock_obj->fd_in = open_vrrp_socket(sock_obj->proto, sock_obj->ifindex);
++		sock_obj->fd_in = open_vrrp_socket(sock_obj->proto, sock_obj->ifindex, 0);
+ 		if (sock_obj->fd_in == -1)
+ 			sock_obj->fd_out = -1;
+ 		else
+ 			sock_obj->fd_out = open_vrrp_send_socket(sock_obj->proto,
+-								 sock_obj->ifindex);
++								 sock_obj->ifindex, 0);
+ 	}
+ }
+ 
